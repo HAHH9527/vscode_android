@@ -6,6 +6,8 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.webkit.JavascriptInterface
+import com.vscodetunnel.app.AppSettings.InputMode
+import com.vscodetunnel.app.AppSettings.inputMode
 import android.webkit.WebSettings
 import android.webkit.WebView
 import org.json.JSONObject
@@ -19,6 +21,7 @@ class OverlayManager(
     private val onVisibilityChanged: (Boolean) -> Unit,
     private val onBackToMenu: () -> Unit = {}
 ) {
+    var onInputModeToggled: (() -> Unit)? = null
     companion object {
         private const val TAG = "OverlayManager"
     }
@@ -45,6 +48,8 @@ class OverlayManager(
         set(value) { field = value; sshCursorX = -1f; sshCursorY = -1f } // reset cursor on new terminal
     // When true, content script keeps inputmode="none" even when overlay is hidden
     var alwaysSuppressInput = false
+    // 为 true 时，覆盖层仅显示特殊键行（系统输入法模式）
+    private var compactMode = false
     // Cursor position for SSH terminal (in CSS px, initialized lazily to center)
     private var sshCursorX = -1f
     private var sshCursorY = -1f
@@ -104,6 +109,13 @@ class OverlayManager(
             "app_settings", android.content.Context.MODE_PRIVATE
         ).getBoolean("vscode_color_invert", false)
         applyInvertToOverlay(invertEnabled)
+        if (compactMode) {
+            webView.post {
+                webView.evaluateJavascript(
+                    "if(typeof setCompactMode==='function')setCompactMode(true)", null
+                )
+            }
+        }
     }
 
     fun hide() {
@@ -183,6 +195,19 @@ class OverlayManager(
         if (inputTarget != InputTarget.VSCODE) return
         val active = isVisible || alwaysSuppressInput
         sendToContentScript("overlayActive", JSONObject().put("active", active))
+    }
+ 
+    
+
+    /** 切换覆盖层紧凑模式（仅特殊键）或完整模式 */
+    fun setCompactMode(enabled: Boolean) {
+        if (compactMode == enabled) return
+        compactMode = enabled
+        webView.post {
+            webView.evaluateJavascript(
+                "if(typeof setCompactMode==='function')setCompactMode($enabled)", null
+            )
+        }
     }
 
     /** Send tunnel keepalive interval to content script (0 = disabled) */
@@ -596,6 +621,21 @@ class OverlayManager(
             } else {
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(5)
+            }
+        }
+
+        @JavascriptInterface
+        fun toggleInputMode() {
+            geckoView.post {
+                val ctx = geckoView.context
+                val current = ctx.inputMode
+                val next = when (current) {
+                    InputMode.OVERLAY -> InputMode.SYSTEM_IME
+                    InputMode.SYSTEM_IME -> InputMode.OVERLAY
+                    InputMode.AUTO -> InputMode.OVERLAY
+                }
+                ctx.inputMode = next
+                onInputModeToggled?.invoke()
             }
         }
     }

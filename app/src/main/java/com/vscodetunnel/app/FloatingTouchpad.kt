@@ -47,6 +47,15 @@ class FloatingTouchpad(
     private var dragOffsetX = 0f
     private var dragOffsetY = 0f
 
+    // Minimize/expand state for IME/system input mode
+    private var minimized = false
+    private var fullTouchpadWidth = 0
+    private var fullTouchpadHeight = 0
+
+    // For detecting taps on the handle bar when in minimized state
+    private var downRawX = 0f
+    private var downRawY = 0f
+
     private val density = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
     private val tapThresholdPx = TAP_MOVE_THRESHOLD * density
@@ -99,6 +108,51 @@ class FloatingTouchpad(
         }
     }
 
+    /** 最小化为小型浮动图标（用于系统输入法模式） */
+    fun minimize() {
+        if (minimized) return
+        minimized = true
+        fullTouchpadWidth = layoutParams?.width ?: width
+        fullTouchpadHeight = layoutParams?.height ?: height
+        // 隐藏除手柄栏外的所有子元素
+        val root = getChildAt(0) as? LinearLayout ?: return
+        for (i in 0 until root.childCount) {
+            root.getChildAt(i).visibility = if (i == 0) View.VISIBLE else View.GONE
+        }
+        val sz = dp(48)
+        layoutParams = (layoutParams ?: LayoutParams(sz, sz)).apply {
+            width = sz; height = sz
+        }
+        background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(0xE6252526.toInt())
+            cornerRadius = dp(24).toFloat()
+            setStroke(dp(1), 0xFF404040.toInt())
+        }
+    }
+
+    /** 从最小化图标展开回完整触摸板 */
+    fun expand() {
+        if (!minimized) return
+        minimized = false
+        val root = getChildAt(0) as? LinearLayout ?: return
+        for (i in 0 until root.childCount) {
+            root.getChildAt(i).visibility = View.VISIBLE
+        }
+        val w = if (fullTouchpadWidth > 0) fullTouchpadWidth else dp(200)
+        val h = if (fullTouchpadHeight > 0) fullTouchpadHeight else dp(180)
+        layoutParams = (layoutParams ?: LayoutParams(w, h)).apply {
+            width = w; height = h
+        }
+        background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(0xE6252526.toInt())
+            cornerRadius = dp(8).toFloat()
+            setStroke(dp(1), 0xFF404040.toInt())
+        }
+    }
+
+    /** 触摸板是否处于最小化（图标）状态 */
+    fun isMinimized() = minimized
+
     private fun buildUI() {
         // Background: dark semi-transparent with border
         background = GradientDrawable().apply {
@@ -137,12 +191,14 @@ class FloatingTouchpad(
             setOnClickListener { onClose?.invoke() }
         })
 
-        // Drag to move
+        // Drag to move (also supports minimize/expand on tap in IME mode)
         handleBar.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     dragOffsetX = event.rawX - this@FloatingTouchpad.translationX
                     dragOffsetY = event.rawY - this@FloatingTouchpad.translationY
+                    downRawX = event.rawX
+                    downRawY = event.rawY
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -153,6 +209,13 @@ class FloatingTouchpad(
                 }
                 MotionEvent.ACTION_UP -> {
                     savePosition()
+                    if (minimized) {
+                        val dx = kotlin.math.abs(event.rawX - downRawX)
+                        val dy = kotlin.math.abs(event.rawY - downRawY)
+                        if (dx < dp(10) && dy < dp(10)) {
+                            expand()
+                        }
+                    }
                     true
                 }
                 else -> false

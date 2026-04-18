@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">VS Code Tunnel</string>
+    <string name="physical_keyboard_connected">检测到物理键盘 — 已切换为系统输入</string>
+    <string name="physical_keyboard_disconnected">物理键盘已移除 — 已恢复覆盖键盘</string>
 </resources>
