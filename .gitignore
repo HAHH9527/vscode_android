@@ -1,6 +1,7 @@
 # Build outputs
 *.apk
 app/build/
+app/.cxx
 build/
 .gradle/
 
@@ -11,3 +12,6 @@ local.properties
 
 # OS
 .DS_Storesj
+
+# opencode
+opencode.json
