@@ -225,6 +225,28 @@ html, body { background:#1b1b1b; touch-action:none; user-select:none; -webkit-us
     .row-uk .key { height:calc(var(--kh) * 0.9); }
     .row-uk .uk-nav { height:calc(var(--kh) * 0.9); }
 }
+
+/* ============ 紧凑模式（系统输入法） ============ */
+html.compact .toolbar { gap: 4px; padding: 4px 8px; }
+html.compact .panels .kb-panel { padding: 2px 3px 4px; }
+html.compact .row-alpha,
+html.compact .row-num,
+html.compact .row-home,
+html.compact .row-shift,
+html.compact .row-bottom,
+html.compact .action-bar,
+html.compact .row-scroll { display: none !important; }
+/* 紧凑特殊键行 */
+html.compact .compact-row { display: flex !important; }
+.compact-row { display: none; gap:3px; padding:2px 3px; justify-content:center; }
+.compact-row .key { height:52px; font-size:20px; }
+.compact-row .key-mod { flex:1.2 1 0; }
+/* 展开的特殊键面板（Fn 键 + 导航键） */
+html.compact .expanded-panel { display: flex !important; flex-wrap:wrap; gap:2px; padding:2px 3px; }
+.expanded-panel { display:none; }
+.expanded-panel .key { height:44px; font-size:16px; flex: 0 0 auto; min-width:40px; padding:0 6px; background:rgba(255,255,255,0.05); }
+.expanded-panel .key:active { background:#1b1b1b; }
+.expanded-panel .key.mod-active { background:#1b1b1b; color:#3399ff; }
 </style>
 </head>
 <body>
@@ -237,6 +259,43 @@ html, body { background:#1b1b1b; touch-action:none; user-select:none; -webkit-us
     <button class="tool-btn tab-btn" id="tpToggle">TP</button>
     <button class="tool-btn" id="invertBtn" title="Invert colors (sunlight)">☀</button>
     <button class="tool-btn" id="hideBtn">Hide</button>
+    <button class="tool-btn" id="inputModeBtn" title="切换输入模式">⌨</button>
+</div>
+
+<!-- 紧凑模式：仅特殊键（html 含 "compact" 类时显示） -->
+<div class="compact-row" id="compactRow">
+    <button class="key key-mod" data-mod="ctrl" id="compactCtrl">Ctrl</button>
+    <button class="key key-mod" data-mod="alt" id="compactAlt">Alt</button>
+    <button class="key key-mod" data-mod="shift" id="compactShift">Shift</button>
+    <button class="key" data-key="Esc">Esc</button>
+    <button class="key" data-key="Tab">Tab</button>
+    <button class="key" data-key="Bksp">⌫</button>
+    <button class="key" data-key="Left">←</button>
+    <button class="key" data-key="Up">↑</button>
+    <button class="key" data-key="Down">↓</button>
+    <button class="key" data-key="Right">→</button>
+    <button class="key" data-key="Enter">↵</button>
+    <button class="tool-btn" id="compactExpand" style="padding:6px 10px;font-size:16px;">⤢</button>
+</div>
+<div class="expanded-panel" id="expandedPanel">
+    <button class="key" data-key="F1">F1</button>
+    <button class="key" data-key="F2">F2</button>
+    <button class="key" data-key="F3">F3</button>
+    <button class="key" data-key="F4">F4</button>
+    <button class="key" data-key="F5">F5</button>
+    <button class="key" data-key="F6">F6</button>
+    <button class="key" data-key="F7">F7</button>
+    <button class="key" data-key="F8">F8</button>
+    <button class="key" data-key="F9">F9</button>
+    <button class="key" data-key="F10">F10</button>
+    <button class="key" data-key="F11">F11</button>
+    <button class="key" data-key="F12">F12</button>
+    <button class="key" data-key="Home">Home</button>
+    <button class="key" data-key="End">End</button>
+    <button class="key" data-key="PgUp">PgUp</button>
+    <button class="key" data-key="PgDn">PgDn</button>
+    <button class="key" data-key="Ins">Ins</button>
+    <button class="key" data-key="Del">Del</button>
 </div>
 
 <div class="panels">
@@ -1545,6 +1604,82 @@ function applyInvert(enabled) {
 document.getElementById('invertBtn').addEventListener('pointerdown', e => {
     e.preventDefault();
     if (typeof A.toggleInvert === 'function') A.toggleInvert();
+});
+
+// ======================== 紧凑模式 ========================
+let compactExpanded = false;
+
+function setCompactMode(enabled) {
+    document.documentElement.classList.toggle('compact', enabled);
+    if (!enabled) {
+        compactExpanded = false;
+        document.getElementById('expandedPanel').style.display = '';
+    }
+    requestAnimationFrame(() => notifyHeight());
+}
+
+// 紧凑行按键处理 — 修饰键使用切换模式（点击=激活，再次点击=取消）
+document.getElementById('compactCtrl').addEventListener('pointerdown', e => {
+    e.preventDefault(); haptic();
+    const btn = e.target;
+    const active = btn.classList.toggle('mod-active');
+    mods.ctrl = active;
+});
+document.getElementById('compactAlt').addEventListener('pointerdown', e => {
+    e.preventDefault(); haptic();
+    const btn = e.target;
+    const active = btn.classList.toggle('mod-active');
+    mods.alt = active;
+});
+document.getElementById('compactShift').addEventListener('pointerdown', e => {
+    e.preventDefault(); haptic();
+    const btn = e.target;
+    const active = btn.classList.toggle('mod-active');
+    mods.shift = active;
+});
+
+// 紧凑行非修饰键 — 发送按键事件，自动取消修饰键
+document.querySelectorAll('.compact-row .key:not(.key-mod)').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+        e.preventDefault(); haptic();
+        const key = btn.dataset.key;
+        if (key) {
+            A.sendKey(JSON.stringify({ key, ctrl:mods.ctrl, alt:mods.alt, shift:mods.shift }));
+            if (mods.ctrl) { mods.ctrl = false; document.getElementById('compactCtrl').classList.remove('mod-active'); }
+            if (mods.alt) { mods.alt = false; document.getElementById('compactAlt').classList.remove('mod-active'); }
+            if (mods.shift) { mods.shift = false; document.getElementById('compactShift').classList.remove('mod-active'); }
+        }
+    });
+});
+
+// 展开/折叠特殊键面板
+document.getElementById('compactExpand').addEventListener('pointerdown', e => {
+    e.preventDefault(); haptic();
+    compactExpanded = !compactExpanded;
+    const panel = document.getElementById('expandedPanel');
+    panel.style.display = compactExpanded ? 'flex' : '';
+    e.target.textContent = compactExpanded ? '⤡' : '⤢';
+    requestAnimationFrame(() => notifyHeight());
+});
+
+// 展开面板按键处理 — 发送按键，自动取消修饰键
+document.querySelectorAll('.expanded-panel .key').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+        e.preventDefault(); haptic();
+        const key = btn.dataset.key;
+        if (key) {
+            A.sendKey(JSON.stringify({ key, ctrl:mods.ctrl, alt:mods.alt, shift:mods.shift }));
+            if (mods.ctrl) { mods.ctrl = false; document.getElementById('compactCtrl').classList.remove('mod-active'); }
+            if (mods.alt) { mods.alt = false; document.getElementById('compactAlt').classList.remove('mod-active'); }
+            if (mods.shift) { mods.shift = false; document.getElementById('compactShift').classList.remove('mod-active'); }
+        }
+    });
+});
+
+// 输入模式切换 — 通知 Android 循环切换模式
+document.getElementById('inputModeBtn').addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (typeof A.toggleInputMode === 'function') A.toggleInputMode();
 });
 
 // Prevent focus stealing
