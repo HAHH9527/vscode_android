@@ -51,7 +51,8 @@ import com.vscodetunnel.app.AppSettings.sshReconnectAttempts
 import com.vscodetunnel.app.AppSettings.sshConnectTimeout
 import com.vscodetunnel.app.AppSettings.sshKeepaliveInterval
 import com.vscodetunnel.app.AppSettings.tunnelKeepaliveInterval
-import com.vscodetunnel.app.AppSettings.suppressSystemKeyboard
+import com.vscodetunnel.app.AppSettings.inputMode
+import com.vscodetunnel.app.AppSettings.InputMode
 import com.vscodetunnel.app.AppSettings.biometricLockEnabled
 import com.vscodetunnel.app.AppSettings.vscodeZoomPercent
 import com.vscodetunnel.app.AppSettings.vscodeLanguage
@@ -97,6 +98,7 @@ class MainActivity : AppCompatActivity() {
     private var authDialog: Dialog? = null
     private var currentTunnelUrl: String? = null
     private var sysKBSuppressed = false
+    private lateinit var keyboardDetector: KeyboardDetector
 
     // SSH
     private lateinit var sshContainer: View
@@ -143,6 +145,37 @@ class MainActivity : AppCompatActivity() {
     private val authPrefs: SharedPreferences by lazy { getSharedPreferences(PREFS_AUTH, MODE_PRIVATE) }
     private val recentPrefs: SharedPreferences by lazy { getSharedPreferences(PREFS_RECENT, MODE_PRIVATE) }
     private val sessionPrefs: SharedPreferences by lazy { getSharedPreferences(PREFS_SESSION, MODE_PRIVATE) }
+
+    private fun effectiveInputMode(): InputMode {
+        if (inputMode == InputMode.AUTO) {
+            return if (keyboardDetector.isPhysicalKeyboardConnected) InputMode.SYSTEM_IME else InputMode.OVERLAY
+        }
+        return inputMode
+    }
+
+    private fun applyInputMode() {
+        val mode = effectiveInputMode()
+        val suppress = when (mode) {
+            InputMode.OVERLAY -> true
+            InputMode.SYSTEM_IME -> false
+        }
+        sysKBSuppressed = suppress
+        geckoView.suppressIME = suppress
+        if (suppress) {
+            val controller = WindowInsetsControllerCompat(window, geckoView)
+            controller.hide(WindowInsetsCompat.Type.ime())
+        }
+        overlayManager.setCompactMode(mode == InputMode.SYSTEM_IME)
+        // 根据模式最小化/恢复浮动触摸板
+        if (mode == InputMode.SYSTEM_IME && floatingTouchpad.visibility == View.VISIBLE) {
+            floatingTouchpad.minimize()
+        } else if (mode == InputMode.OVERLAY && floatingTouchpad.isMinimized()) {
+            floatingTouchpad.expand()
+            floatingTouchpad.updateSize()
+        }
+        ViewCompat.requestApplyInsets(findViewById(R.id.rootFrame))
+        FileLogger.d(TAG, "applyInputMode: mode=$mode, suppress=$suppress")
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -208,7 +241,8 @@ class MainActivity : AppCompatActivity() {
             onBackToMenu = { suspendSession() }
         )
         overlayManager.setup()
-        overlayManager.alwaysSuppressInput = suppressSystemKeyboard
+        overlayManager.alwaysSuppressInput = (inputMode != InputMode.SYSTEM_IME)
+        overlayManager.onInputModeToggled = { applyInputMode() }
         var lastToggleClickTime = 0L
         var pendingSingleClick: Runnable? = null
         val toggleHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -253,10 +287,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Apply suppress setting immediately so it's ready before any session
-        if (suppressSystemKeyboard) {
-            geckoView.suppressIME = true
-            sysKBSuppressed = true
+        keyboardDetector = KeyboardDetector(this) { connected ->
+            runOnUiThread {
+                val mode = inputMode
+                if (mode == InputMode.AUTO) {
+                    if (connected) {
+                        android.widget.Toast.makeText(this,
+                            R.string.physical_keyboard_connected,
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        android.widget.Toast.makeText(this,
+                            R.string.physical_keyboard_disconnected,
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    applyInputMode()
+                }
+            }
         }
+        keyboardDetector.scanAndNotify()
+        applyInputMode()
 
         // Restore state
         val token = authPrefs.getString(KEY_TOKEN, null)
@@ -1537,8 +1588,28 @@ class MainActivity : AppCompatActivity() {
 
         // === KEYBOARD ===
         section("Keyboard")
-        val suppressCheck = check("Suppress system keyboard in sessions", suppressSystemKeyboard)
-        layout.addView(suppressCheck)
+        label("输入模式")
+        val inputModeLabels = arrayOf("仅内置键盘 (Overlay only)", "仅系统输入法 (System IME)", "自动检测 (Auto)")
+        val inputModeValues = arrayOf(InputMode.OVERLAY, InputMode.SYSTEM_IME, InputMode.AUTO)
+        val inputModeGroup = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+        }
+        var selectedInputModeIndex = inputModeValues.indexOf(inputMode).coerceAtLeast(0)
+        inputModeLabels.forEachIndexed { idx, text ->
+            android.widget.RadioButton(this).apply {
+                this.text = text; isChecked = idx == selectedInputModeIndex
+                setTextColor(colorPrim); textSize = 15f
+                id = View.generateViewId()
+                inputModeGroup.addView(this)
+                setOnCheckedChangeListener { _, isChecked ->
+                    if (isChecked) selectedInputModeIndex = idx
+                }
+            }
+        }
+        layout.addView(inputModeGroup)
         val hapticCheck = check("Haptic feedback", hapticFeedback)
         layout.addView(hapticCheck)
         label("Key repeat delay (ms)")
@@ -1639,15 +1710,10 @@ class MainActivity : AppCompatActivity() {
                 GeckoManager.setLocale(newLang)
             }
             // Keyboard
-            suppressSystemKeyboard = suppressCheck.isChecked
-            overlayManager.alwaysSuppressInput = suppressSystemKeyboard
+            inputMode = inputModeFromRadio(selectedInputModeIndex)
+            overlayManager.alwaysSuppressInput = (inputMode != InputMode.SYSTEM_IME)
             overlayManager.syncInputSuppression()
-            if (sessionWrapper.visibility == View.VISIBLE && suppressSystemKeyboard) {
-                geckoView.suppressIME = true; sysKBSuppressed = true
-                WindowInsetsControllerCompat(window, geckoView).hide(WindowInsetsCompat.Type.ime())
-            } else if (!suppressSystemKeyboard && !overlayManager.isVisible) {
-                geckoView.suppressIME = false; sysKBSuppressed = false
-            }
+            applyInputMode()
             hapticFeedback = hapticCheck.isChecked
             keyRepeatDelay = repeatDelayField.text.toString().toIntOrNull() ?: 400
             keyRepeatRate = repeatRateField.text.toString().toIntOrNull() ?: 50
@@ -1828,7 +1894,7 @@ class MainActivity : AppCompatActivity() {
         currentSessionIdx = tunnelSessions.size - 1
 
         // Suppress BEFORE setSession so onCreateInputConnection returns null immediately
-        if (suppressSystemKeyboard) {
+        if (inputMode != InputMode.SYSTEM_IME) {
             sysKBSuppressed = true
             geckoView.suppressIME = true
         }
@@ -1846,7 +1912,7 @@ class MainActivity : AppCompatActivity() {
         geckoContainer.visibility = View.VISIBLE
         findViewById<Button>(R.id.floatingToggle).visibility = View.VISIBLE
 
-        if (suppressSystemKeyboard) {
+        if (inputMode != InputMode.SYSTEM_IME) {
             // Also hide IME in case it was already showing
             val controller = WindowInsetsControllerCompat(window, geckoView)
             controller.hide(WindowInsetsCompat.Type.ime())
@@ -1891,11 +1957,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onOverlayVisibilityChanged(visible: Boolean) {
-        // Suppress system keyboard: always when setting is on, or when overlay is visible
-        val suppress = visible || suppressSystemKeyboard
+        val mode = effectiveInputMode()
+        val suppress = when (mode) {
+            InputMode.OVERLAY -> visible
+            InputMode.SYSTEM_IME -> false
+        }
         sysKBSuppressed = suppress
         geckoView.suppressIME = suppress
-        FileLogger.d(TAG, "Overlay visible: $visible, sysKB suppressed: $suppress")
+        FileLogger.d(TAG, "Overlay visible: $visible, mode: $mode, sysKB suppressed: $suppress")
         if (suppress) {
             val controller = WindowInsetsControllerCompat(window, geckoView)
             controller.hide(WindowInsetsCompat.Type.ime())
@@ -2059,7 +2128,7 @@ class MainActivity : AppCompatActivity() {
         currentSessionIdx = idx
         currentTunnelUrl = info.url
 
-        if (suppressSystemKeyboard) {
+        if (inputMode != InputMode.SYSTEM_IME) {
             sysKBSuppressed = true
             geckoView.suppressIME = true
         }
@@ -2078,7 +2147,7 @@ class MainActivity : AppCompatActivity() {
         geckoContainer.visibility = View.VISIBLE
         findViewById<Button>(R.id.floatingToggle).visibility = View.VISIBLE
 
-        if (suppressSystemKeyboard) {
+        if (inputMode != InputMode.SYSTEM_IME) {
             val controller = WindowInsetsControllerCompat(window, geckoView)
             controller.hide(WindowInsetsCompat.Type.ime())
             ViewCompat.requestApplyInsets(findViewById(R.id.rootFrame))
@@ -2587,6 +2656,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        keyboardDetector.onConfigurationChanged(newConfig)
         FileLogger.d(TAG, "Configuration changed: orientation=${newConfig.orientation}, " +
             "screenWidthDp=${newConfig.screenWidthDp}, screenHeightDp=${newConfig.screenHeightDp}, " +
             "smallestScreenWidthDp=${newConfig.smallestScreenWidthDp}, densityDpi=${newConfig.densityDpi}")
@@ -2752,6 +2822,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     // --- Utils ---
+
+    private fun inputModeFromRadio(index: Int): InputMode {
+        return when (index) {
+            0 -> InputMode.OVERLAY
+            1 -> InputMode.SYSTEM_IME
+            2 -> InputMode.AUTO
+            else -> InputMode.OVERLAY
+        }
+    }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
