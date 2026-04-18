@@ -6,7 +6,8 @@ import android.content.SharedPreferences
 object AppSettings {
     private const val PREFS_NAME = "app_settings"
 
-    private const val KEY_SUPPRESS_SYSKB = "suppress_system_keyboard"
+    // Input mode selection
+    private const val KEY_INPUT_MODE = "input_mode"
     private const val KEY_KEEPALIVE = "keepalive_enabled"
     private const val KEY_HAPTIC = "haptic_feedback"
     private const val KEY_FONT_SIZE = "terminal_font_size"
@@ -33,10 +34,21 @@ object AppSettings {
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    // --- Keyboard ---
-    var Context.suppressSystemKeyboard: Boolean
-        get() = prefs(this).getBoolean(KEY_SUPPRESS_SYSKB, true)
-        set(value) = prefs(this).edit().putBoolean(KEY_SUPPRESS_SYSKB, value).apply()
+    // Input mode: Overlay / IME / Auto
+    enum class InputMode(val label: String) {
+        OVERLAY("overlay"),
+        SYSTEM_IME("ime"),
+        AUTO("auto");
+
+        companion object {
+            fun fromString(s: String?): InputMode =
+                entries.find { it.label == s } ?: OVERLAY
+        }
+    }
+
+    var Context.inputMode: InputMode
+        get() = InputMode.fromString(prefs(this).getString(KEY_INPUT_MODE, null))
+        set(value) = prefs(this).edit().putString(KEY_INPUT_MODE, value.label).apply()
 
     var Context.hapticFeedback: Boolean
         get() = prefs(this).getBoolean(KEY_HAPTIC, false)
