@@ -158,6 +158,7 @@ class MainActivity : AppCompatActivity() {
         val suppress = when (mode) {
             InputMode.OVERLAY -> true
             InputMode.SYSTEM_IME -> false
+            InputMode.AUTO -> throw IllegalStateException("effectiveInputMode() should never return AUTO")
         }
         sysKBSuppressed = suppress
         geckoView.suppressIME = suppress
@@ -1961,6 +1962,7 @@ class MainActivity : AppCompatActivity() {
         val suppress = when (mode) {
             InputMode.OVERLAY -> visible
             InputMode.SYSTEM_IME -> false
+            InputMode.AUTO -> throw IllegalStateException("effectiveInputMode() should never return AUTO")
         }
         sysKBSuppressed = suppress
         geckoView.suppressIME = suppress
